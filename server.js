@@ -4,30 +4,30 @@ const mongoose = require('mongoose');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 require('dotenv').config();
 
-// --- MODELS ---
+// Import Models
 const Game = require('./models/Game');
 const Team = require('./models/Team');
 
 const app = express();
 
-// --- CONFIGURATION (UPDATED FOR CLOUD) ---
-// 1. Secrets: Look for Environment Variables first, fallback to hardcoded strings for local testing
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/squad-stats';
-const API_KEY = process.env.GEMINI_API_KEY || "AIzaSyAg0TEQelgYyzii50tgLW-iITZLFcs6HHU"; 
-const PORT = process.env.PORT || 3000;
+// --- CONFIGURATION ---
+const MONGO_URI = process.env.MONGO_URI;
+const API_KEY = process.env.GEMINI_API_KEY;
 
-// 2. Initialize AI
+// Initialize AI
 const genAI = new GoogleGenerativeAI(API_KEY);
 
-// 3. Middleware
+// Middleware
 app.use(cors());
 app.use(express.json());
 
-// --- DATABASE CONNECTION ---
-mongoose.connect(MONGO_URI)
-    .then(() => console.log("✅ Connected to Database"))
-    .catch(err => console.error("❌ DB Connection Error:", err));
-
+// --- DATABASE CONNECTION (Vercel Optimized) ---
+// Checks if connection exists before connecting to prevent Vercel crashes
+if (mongoose.connection.readyState === 0) {
+    mongoose.connect(MONGO_URI)
+        .then(() => console.log("✅ Connected to MongoDB"))
+        .catch(err => console.error("❌ MongoDB Connection Error:", err));
+}
 
 // ==========================================
 //                 ROUTES
@@ -68,6 +68,7 @@ app.post('/api/teams/:id/players', async (req, res) => {
         const { name, number } = req.body;
         const team = await Team.findById(req.params.id);
         if (!team) return res.status(404).json({ error: "Team not found" });
+
         team.players.push({ name, number });
         await team.save();
         res.json(team);
@@ -75,54 +76,6 @@ app.post('/api/teams/:id/players', async (req, res) => {
         res.status(500).json({ error: "Could not add player" });
     }
 });
-
-app.delete('/api/teams/:teamId/players/:playerId', async (req, res) => {
-    try {
-        const { teamId, playerId } = req.params;
-        const team = await Team.findById(teamId);
-        team.players.pull({ _id: playerId }); 
-        await team.save();
-        res.json(team);
-    } catch (err) {
-        res.status(500).json({ error: "Could not delete player" });
-    }
-});
-
-app.delete('/api/teams/:id', async (req, res) => {
-    try {
-        await Team.findByIdAndDelete(req.params.id);
-        await Game.deleteMany({ teamId: req.params.id });
-        res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: "Could not delete team" });
-    }
-});
-
-app.put('/api/teams/:id', async (req, res) => {
-    try {
-        const { name } = req.body;
-        const updatedTeam = await Team.findByIdAndUpdate(req.params.id, { name }, { new: true });
-        res.json(updatedTeam);
-    } catch (err) {
-        res.status(500).json({ error: "Could not update team" });
-    }
-});
-
-app.put('/api/teams/:teamId/players/:playerId', async (req, res) => {
-    try {
-        const { teamId, playerId } = req.params;
-        const { name, number } = req.body;
-        await Team.updateOne(
-            { _id: teamId, "players._id": playerId },
-            { $set: { "players.$.name": name, "players.$.number": number } }
-        );
-        const updatedTeam = await Team.findById(teamId);
-        res.json(updatedTeam);
-    } catch (err) {
-        res.status(500).json({ error: "Could not update player" });
-    }
-});
-
 
 // --- GAME ROUTES ---
 app.post('/api/games', async (req, res) => {
@@ -173,6 +126,54 @@ app.get('/api/games/team/:teamId', async (req, res) => {
     }
 });
 
+// --- CRUD EXTENSIONS ---
+app.delete('/api/teams/:id', async (req, res) => {
+    try {
+        const teamId = req.params.id;
+        await Team.findByIdAndDelete(teamId);
+        await Game.deleteMany({ teamId: teamId });
+        res.json({ success: true, message: "Team and history deleted" });
+    } catch (err) {
+        res.status(500).json({ error: "Could not delete team" });
+    }
+});
+
+app.put('/api/teams/:id', async (req, res) => {
+    try {
+        const { name } = req.body;
+        const updatedTeam = await Team.findByIdAndUpdate(req.params.id, { name }, { new: true });
+        res.json(updatedTeam);
+    } catch (err) {
+        res.status(500).json({ error: "Could not update team" });
+    }
+});
+
+app.delete('/api/teams/:teamId/players/:playerId', async (req, res) => {
+    try {
+        const { teamId, playerId } = req.params;
+        const team = await Team.findById(teamId);
+        team.players.pull({ _id: playerId }); 
+        await team.save();
+        res.json(team);
+    } catch (err) {
+        res.status(500).json({ error: "Could not delete player" });
+    }
+});
+
+app.put('/api/teams/:teamId/players/:playerId', async (req, res) => {
+    try {
+        const { teamId, playerId } = req.params;
+        const { name, number } = req.body;
+        await Team.updateOne(
+            { _id: teamId, "players._id": playerId },
+            { $set: { "players.$.name": name, "players.$.number": number } }
+        );
+        const updatedTeam = await Team.findById(teamId);
+        res.json(updatedTeam);
+    } catch (err) {
+        res.status(500).json({ error: "Could not update player" });
+    }
+});
 
 // --- ANALYTICS ROUTES ---
 app.get('/api/stats/:teamId/player/:name', async (req, res) => {
@@ -205,7 +206,7 @@ app.get('/api/stats/:teamId/player/:name', async (req, res) => {
     }
 });
 
-// --- AI ROUTE (Moved UP so it is registered correctly) ---
+// --- AI ROUTE (Moved UP so it works!) ---
 app.post('/api/ai/analyze', async (req, res) => {
     try {
         const { teamId, userQuestion } = req.body;
@@ -214,6 +215,8 @@ app.post('/api/ai/analyze', async (req, res) => {
 
         if (!team) return res.status(404).json({ error: "Team not found" });
 
+        let rosterSummary = team.players.map(p => p.name).join(", ");
+        
         let playerStats = {};
         games.forEach(game => {
             game.players.forEach(p => {
@@ -228,13 +231,12 @@ app.post('/api/ai/analyze', async (req, res) => {
         });
 
         const statsString = JSON.stringify(playerStats);
-        
-        // Use gemini-flash-latest or gemini-pro (whichever worked for you)
         const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
         
         const prompt = `
             You are an expert Basketball Assistant Coach. 
             Team: ${team.name}
+            Roster: ${rosterSummary}
             Stats JSON: ${statsString}
             Question: "${userQuestion}"
             Answer professionally.
@@ -242,17 +244,28 @@ app.post('/api/ai/analyze', async (req, res) => {
 
         const result = await model.generateContent(prompt);
         const response = await result.response;
-        const text = response.text();
-
-        res.json({ reply: text });
+        res.json({ reply: response.text() });
 
     } catch (error) {
         console.error("AI Error:", error);
-        res.status(500).json({ error: "The AI Coach is currently unavailable." });
+        res.status(500).json({ error: "AI Unavailable" });
     }
 });
 
-// --- SERVER START (MUST BE LAST) ---
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+// --- DEFAULT ROUTE (Health Check) ---
+app.get('/', (req, res) => {
+    res.send('Squad Stats Backend is Running!');
 });
+
+// ==========================================
+//           VERCEL EXPORT
+// ==========================================
+// This is required for Vercel to run Express
+if (process.env.VERCEL) {
+    module.exports = app;
+} else {
+    const PORT = process.env.PORT || 3000;
+    app.listen(PORT, () => {
+        console.log(`Server running on port ${PORT}`);
+    });
+}
