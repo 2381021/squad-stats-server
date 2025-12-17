@@ -5,7 +5,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 require('dotenv').config();
 
 // Import Models
-const Game = require('./models/Game');
+const Game = require('./models/game');
 const Team = require('./models/Team');
 
 const app = express();
